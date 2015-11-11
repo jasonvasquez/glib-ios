@@ -1,17 +1,18 @@
 #!/bin/bash
 
 
-
 # Configurable globals
 readonly MIN_IOS_VERSION="7.0"
 
-readonly LIBFFI_VERSION="3.2.1"
+# This is coming off a fork, arm support is not fully functional from the master repo
+# See https://github.com/NativeScript/libffi
+readonly LIBFFI_VERSION="bf64a497b4b1da1aae4f14d61761f420ca48cc03"
+
 readonly GLIB_VERSION="2.47.1"
 readonly GETTEXT_VERSION="0.19.6"
 readonly ICONV_VERSION="1.14"
 
 readonly ARCHS=(armv7 armv7s arm64 i386 x86_64)
-
 
 
 
@@ -157,15 +158,43 @@ set_build_env_for_arch() {
 
   export CFLAGS="$CFLAGS -arch ${arch}"
   export CFLAGS="$CFLAGS -I${ROOT_DIR}/dependencies/gettext/${arch}/include"
+  export CFLAGS="$CFLAGS -I${ROOT_DIR}/dependencies/libiconv/${arch}/include"
 
   export CXXFLAGS=$CFLAGS
   export CPPFLAGS=$CFLAGS
-  export LDFLAGS="-L${ROOT_DIR}/dependencies/libffi/fat/lib -L${ROOT_DIR}/dependencies/gettext/fat/lib"
+
+  export LDFLAGS="-L${ROOT_DIR}/dependencies/libffi/fat/lib"
+  export LDFLAGS="$LDFLAGS -L${ROOT_DIR}/dependencies/gettext/fat/lib"
+  export LDFLAGS="$LDFLAGS -L${ROOT_DIR}/dependencies/libiconv/fat/lib"
+  export LDFLAGS="$LDFLAGS -framework Foundation"
+
   export ac_cv_func__NSGetEnviron=no
+  export glib_cv_stack_grows=no
+  export glib_cv_uscore=no
+  export ac_cv_func_posix_getgrgid_r=yes
+  export ac_cv_func_posix_getpwuid_r=yes
+
+  OLD_PATH=$PATH
+  export PATH="${ROOT_DIR}/dependencies/gettext/i386/bin:$PATH"
 }
 
 unset_build_env() {
-  unset PKG_CONFIG_PATH CC CXX CFLAGS CXXFLAGS CPPFLAGS LDFLAGS ac_cv_func__NSGetEnviron
+  unset \
+    PKG_CONFIG_PATH \
+    CC \
+    CXX \
+    CFLAGS \
+    CXXFLAGS \
+    CPPFLAGS \
+    LDFLAGS \
+    \
+    ac_cv_func__NSGetEnviron \
+    glib_cv_stack_grows \
+    glib_cv_uscore \
+    ac_cv_func_posix_getgrgid_r \
+    ac_cv_func_posix_getpwuid_r
+
+  export PATH=$OLD_PATH
 }
 
 
@@ -217,10 +246,6 @@ build_iconv() {
     && fetch "libiconv" \
       "http://ftp.gnu.org/pub/gnu/libiconv/libiconv-${ICONV_VERSION}.tar.gz" \
       ${iconvarchive}
-
-  is_dir $prefix \
-    && run "rm -rf $prefix" "  Removing old libiconv install prefix directory"
-
 
   for arch in "${ARCHS[@]}"; do
     set_build_env_for_arch ${arch}
@@ -283,10 +308,6 @@ build_gettext() {
       "http://ftp.gnu.org/pub/gnu/gettext/gettext-${GETTEXT_VERSION}.tar.gz" \
       ${gtarchive}
 
-  is_dir $prefix \
-    && run "rm -rf $prefix" "  Removing old gettext install prefix directory"
-
-
   for arch in "${ARCHS[@]}"; do
     set_build_env_for_arch ${arch}
 
@@ -340,10 +361,6 @@ build_glib() {
       "https://github.com/GNOME/glib/archive/${GLIB_VERSION}.zip" \
       ${glibzip}
 
-  is_dir $prefix \
-    && run "rm -rf $prefix" "Removing old glib install prefix directory"
-
-
   for arch in "${ARCHS[@]}"; do
     set_build_env_for_arch ${arch}
 
@@ -368,7 +385,8 @@ build_glib() {
         --enable-static \
         --disable-shared \
         --host=$(host_for_arch ${arch}) \
-        --with-libiconv=native
+        --with-libiconv=gnu \
+        --disable-dtrace
 EOF
 
     run "${cmd}" "  Configuring glib for ${arch}"
@@ -378,9 +396,11 @@ EOF
     run "make install" "  Installing glib for ${arch} into ${prefix}/${arch}"
   done
 
-exit
   cd ${ROOT_DIR}
-  fatify "dependencies/libffi/ARCH/lib/libffi.a"
+  local glibs=(libgio-2.0.a libglib-2.0.a libgmodule-2.0.a libgobject-2.0.a libgthread-2.0.a)
+  for lib in "${glibs[@]}"; do
+    fatify "dependencies/glib/ARCH/lib/${lib}"
+  done
 
   unset_build_env
   unset cmd
@@ -398,14 +418,11 @@ build_libffi() {
 
   ! is_file $ffizip \
     && fetch "libffi" \
-      "https://github.com/atgreen/libffi/archive/v${LIBFFI_VERSION}.zip" \
+      "https://github.com/NativeScript/libffi/archive/${LIBFFI_VERSION}.zip" \
       ${ffizip}
 
   is_dir $ffidir \
     && run "rm -rf $ffidir" "Removing old libffi build directory"
-
-  is_dir $prefix \
-    && run "rm -rf $prefix" "Removing old libffi install prefix directory"
 
   cd "${WORK_DIR}"
   run "unzip ${ffizip}" "Unpacking libffi"
@@ -451,6 +468,7 @@ main() {
   build_libffi
   build_iconv
   build_gettext
+  build_iconv
   build_glib
 }
 
